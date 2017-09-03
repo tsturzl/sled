@@ -20,12 +20,13 @@ fn leak_buf(v: Vec<u8>, vallen: *mut size_t) -> *mut c_char {
 /// Create a new configuration.
 #[no_mangle]
 pub unsafe extern "C" fn rsdb_create_config() -> *mut Config {
-    Box::into_raw(Box::new(Config::default()))
+    let ptr = Box::into_raw(Box::new(Config::default()));
+    ptr
 }
 
 /// Destroy a configuration.
 #[no_mangle]
-pub unsafe extern "C" fn rsdb_destroy_config(config: *mut Config) {
+pub unsafe extern "C" fn rsdb_free_config(config: *mut Config) {
     drop(Box::from_raw(config));
 }
 
@@ -83,7 +84,7 @@ pub unsafe extern "C" fn rsdb_config_snapshot_after_ops(
 
 /// Open a rsdb lock-free log-structured tree.
 #[no_mangle]
-pub unsafe extern "C" fn rsdb_open(config: *mut Config) -> *mut Tree {
+pub unsafe extern "C" fn rsdb_open_tree(config: *mut Config) -> *mut Tree {
     let conf_2 = (*config).clone();
     Box::into_raw(Box::new(Tree::new(conf_2)))
 }
@@ -95,15 +96,22 @@ pub unsafe extern "C" fn rsdb_close(db: *mut Tree) {
 }
 
 /// Free a buffer originally allocated by RSDB.
+#[no_mangle]
 pub unsafe extern "C" fn rsdb_free_buf(buf: *mut c_char, sz: size_t) {
     drop(Vec::from_raw_parts(buf, sz, sz));
 }
 
+/// Free a Tree created by RSDB.
+#[no_mangle]
+pub unsafe extern "C" fn rsdb_free_tree(tree: *mut Tree) {
+    drop(Box::from_raw(tree));
+}
+
 /// Free an iterator.
+#[no_mangle]
 pub unsafe extern "C" fn rsdb_free_iter(iter: *mut TreeIter) {
     drop(Box::from_raw(iter));
 }
-
 
 /// Set a key to a value.
 #[no_mangle]
