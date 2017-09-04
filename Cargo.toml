@@ -15,10 +15,6 @@ default = []
 bench = ["clap", "num_cpus", "log", "rand", "rayon", "zstd", "env_logger"]
 stress = ["docopt", "chan-signal", "rayon", "rand", "zstd"]
 
-[lib]
-name = "rsdb"
-crate-type = ["dylib"]
-
 [[bin]]
 name = "bench"
 required-features = ["bench"]

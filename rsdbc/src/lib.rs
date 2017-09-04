@@ -1,11 +1,14 @@
+extern crate rsdb;
+extern crate libc;
+
 use std::ffi::CString;
 use std::mem;
 use std::ptr;
 use std::slice;
 
-use super::*;
-
 use libc::*;
+
+use rsdb::{Config, Tree, TreeIter};
 
 fn leak_buf(v: Vec<u8>, vallen: *mut size_t) -> *mut c_char {
     unsafe {

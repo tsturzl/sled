@@ -1,0 +1,18 @@
+[package]
+name = "rsdbc"
+version = "0.1.0"
+authors = ["Tyler Neely <t@jujit.su>"]
+description = "a C-compatible library for rsdb"
+license = "Apache-2.0"
+homepage = "https://github.com/spacejam/rsdb"
+repository = "https://github.com/spacejam/rsdb/rsdbc"
+keywords = ["database", "embedded", "concurrent", "persistent", "c"]
+documentation = "https://docs.rs/rsdbc/"
+
+[lib]
+name = "rsdb"
+crate-type = ["dylib"]
+
+[dependencies]
+libc = "0.2"
+rsdb = {version = "0.12", path = ".."}
