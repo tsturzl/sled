@@ -1,4 +1,4 @@
-# sled likes eating data! it's pre-alpha
+# sled likes eating data! it's alpha
 
 <p>
   <img src="https://raw.githubusercontent.com/spacejam/sled/master/art/tree_face.png" width="20%" height="auto" />
@@ -8,7 +8,7 @@
 [![crates.io](https://meritbadge.herokuapp.com/sled)](https://crates.io/crates/sled)
 [![documentation](https://docs.rs/sled/badge.svg)](https://docs.rs/sled)
 
-A pre-alpha modern embedded database.
+A modern embedded database.
 
 ```rust
 extern crate sled;
@@ -49,19 +49,25 @@ tree.del(&k);
 
 1. don't make the user think. the interface should be obvious.
 1. don't surprise users with performance traps.
-1. don't wake up operators. bring reliability techniques from academia into real-world practice.
-1. don't use so much electricity. our data structures should play to modern hardware's strengths.
+1. don't wake up operators. bring reliability techniques from academia
+   into real-world practice.
+1. don't use so much electricity. our data structures should play to modern
+   hardware's strengths.
+1. decompose into flexible, simple components that can be used to rapidly
+   build new kinds of databases.
 
 # plans
 
 * beat [LSM trees](https://en.wikipedia.org/wiki/Log-structured_merge-tree)
-  for reads and [traditional B+ trees](https://en.wikipedia.org/wiki/B%2B_tree) for writes
-* MVCC, transactions, merge operators and snapshots provided via a higher-level `Db` versioned-key interface
+  for reads and [traditional B+ trees](https://en.wikipedia.org/wiki/B%2B_tree)
+  for writes
+* MVCC, transactions, merge operators and snapshots provided via a higher-level
+  `Db` versioned-key interface
 * custom merge operators a la RocksDB
-* form the iron core of a [linearizable store](https://github.com/spacejam/rasputin) and a [flexible location-agnostic store](https://github.com/spacejam/icefall)
+* form the iron core of a [linearizable store](https://github.com/spacejam/rasputin)
+  and a [flexible location-agnostic store](https://github.com/spacejam/icefall)
 * SQLite, MySQL, Postgres back-end plugin support
 * forward-compatible binary format
-* dynamic learned/probabilistic index support
 * bindings for other languages
 
 # warnings
@@ -75,7 +81,7 @@ tree.del(&k);
   it has an extremely high theoretical performance but there
   is a bit of tuning to get there. currently only around 200k
   operations per second with mixed workloads, and 7 million/s
-  for read-only workloads on tiny keys. this will be improving 
+  for read-only workloads on tiny keys. this will be improving
   dramatically soon!
 
 # contribution welcome!
