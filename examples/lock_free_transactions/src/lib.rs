@@ -1,10 +1,13 @@
 //! An example of how to build multi-key transactions on top of
 //! sled's single-key atomicity guarantees.
+//!
+//! The basic idea is to keep a global transaction ID,
+//! and append a write's transaction ID to all keys.
+//! Reads are bounded by this
 
 extern crate sled;
 
 use sled::{Config, DbResult, Error, Tree};
-use std::ops::Deref;
 
 const TX_PENDING: u8 = 0;
 const TX_COMMITTED: u8 = 1;
@@ -30,7 +33,7 @@ enum TxStatus {
 
 struct TxDb {
     isolation: Isolation,
-    db: Tree,
+    tree: Tree,
 }
 
 unsafe impl Send for TxDb {}
@@ -42,14 +45,6 @@ struct Tx<'a> {
     reads: Vec<Read>,
     deletes: Vec<Delete>,
     db: &'a TxDb,
-}
-
-impl Deref for TxDb {
-    type Target = Tree;
-
-    fn deref(&self) -> &Tree {
-        &self.db
-    }
 }
 
 struct Predicate(Key, PredicateFn);
@@ -77,7 +72,7 @@ impl TxDb {
         Ok(TxDb {
             // pluggable
             isolation: Isolation::Serializable,
-            db: Tree::start(config)?,
+            tree: Tree::start(config)?,
         })
     }
 
@@ -93,7 +88,7 @@ impl TxDb {
 
     fn new_txid(&self) -> DbResult<TxId, ()> {
         // try to read last
-        let mut max_v: Option<Value> = self.db.get(TX_MAX)?;
+        let mut max_v: Option<Value> = self.tree.get(TX_MAX)?;
 
         loop {
             let max_or_default_v = max_v.clone().unwrap_or_else(|| vec![0; 8]);
@@ -106,14 +101,27 @@ impl TxDb {
             let new_v = txid_to_v(new);
 
             // CAS old to new
-            let res = self.db.cas(TX_MAX.to_owned(), max_v, Some(new_v));
+            let res = self.tree.cas(TX_MAX.to_owned(), max_v, Some(new_v));
             match res {
                 Ok(()) => return Ok(new),
                 Err(Error::CasFailed(Some(v))) => max_v = Some(v),
                 _ => return res.map(|_| 0).map_err(|e| e.danger_cast()),
             }
         }
+    }
 
+    // read the value, and roll back any encountered transactions
+    fn rollback_read(&self, k: &Key) -> DbResult<Option<Value>, ()> {
+        let value = self.tree.get(k)?;
+        if let Some(value) = value {
+            let (tx, rest) = split_txid_from_v(value)?;
+            match self.rollback_tx(tx) {
+                Ok(()) => Ok(rest),
+                e
+            }
+        } else {
+            Ok(value)
+        }
     }
 }
 
@@ -141,20 +149,20 @@ impl<'a> Tx<'a> {
         let mut write_reads = vec![];
         let mut delete_reads = vec![];
 
-        for Read(k) in self.reads {
-            read_reads.push(self.db.get(&*k)?);
+        for &Predicate(ref k, _) in &self.predicates {
+            predicate_reads.push((k, self.db.tree.get(&*k)?));
         }
 
-        for Predicate(k, _p) in self.predicates {
-            predicate_reads.push(self.db.get(&*k)?);
+        for &Read(ref k) in &self.reads {
+            read_reads.push((k, self.db.tree.get(&*k)?));
         }
 
-        for Write(k, _v) in self.writes {
-            write_reads.push(self.db.get(&*k)?);
+        for &Write(ref k, _) in &self.writes {
+            write_reads.push((k, self.db.tree.get(&*k)?));
         }
 
-        for Delete(k) in self.deletes {
-            delete_reads.push(self.db.get(&*k)?);
+        for &Delete(ref k) in &self.deletes {
+            delete_reads.push((k, self.db.tree.get(&*k)?));
         }
 
         // create tx
@@ -162,6 +170,10 @@ impl<'a> Tx<'a> {
         println!("generated new txid {}", txid);
 
         // CAS values to refer to tx
+        for (k, old) in read_reads.into_iter() {}
+        for (k, old) in predicate_reads.into_iter() {}
+        for (k, old) in write_reads.into_iter() {}
+        for (k, old) in delete_reads.into_iter() {}
 
         // CAS tx from Pending -> Committed
 
