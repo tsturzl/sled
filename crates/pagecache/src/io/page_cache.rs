@@ -124,19 +124,6 @@ impl<'a, P> PageGet<'a, P>
     }
 }
 
-struct PidDropper(PageID, Arc<Mutex<BinaryHeap<PageID>>>);
-
-impl Drop for PidDropper {
-    fn drop(&mut self) {
-        let mut free = self.1.lock().unwrap();
-        // panic if we were able to double-free a page
-        for e in free.iter() {
-            assert_ne!(e, &self.0, "page was double-freed");
-        }
-        free.push(self.0);
-    }
-}
-
 /// A lock-free pagecache which supports fragmented pages
 /// for dramatically improving write throughput.
 ///
@@ -327,9 +314,9 @@ impl<PM, P, R> PageCache<PM, P, R>
             pid: pid,
             update: Update::Allocate,
         };
-        let serialize_start = clock();
-        let bytes = serialize(&prepend, Infinite).unwrap();
-        M.serialize.measure(clock() - serialize_start);
+        let bytes = measure(&M.serialize, || {
+            serialize(&prepend, Infinite).unwrap()
+        });
 
         // reserve slot in log
         // FIXME not threadsafe?
@@ -367,9 +354,9 @@ impl<PM, P, R> PageCache<PM, P, R>
             pid: pid,
             update: Update::Free,
         };
-        let serialize_start = clock();
-        let bytes = serialize(&prepend, Infinite).unwrap();
-        M.serialize.measure(clock() - serialize_start);
+        let bytes = measure(&M.serialize, || {
+            serialize(&prepend, Infinite).unwrap()
+        });
 
         // reserve slot in log
         let res = self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
@@ -399,9 +386,16 @@ impl<PM, P, R> PageCache<PM, P, R>
         // the segment to inactive, resulting in a race otherwise.
         res.complete().map_err(|e| e.danger_cast())?;
 
-        let pd = PidDropper(pid, Arc::clone(&self.free));
+        let free = self.free.clone();
         unsafe {
-            guard.defer(move || pd);
+            guard.defer(move || {
+                let mut free = free.lock().unwrap();
+                // panic if we were able to double-free a page
+                for &e in free.iter() {
+                    assert_ne!(e, pid, "page was double-freed");
+                }
+                free.push(pid);
+            });
             guard.flush();
         }
         Ok(())
@@ -432,9 +426,9 @@ impl<PM, P, R> PageCache<PM, P, R>
                 Update::Append(new.clone())
             },
         };
-        let serialize_start = clock();
-        let bytes = serialize(&prepend, Infinite).unwrap();
-        M.serialize.measure(clock() - serialize_start);
+        let bytes = measure(&M.serialize, || {
+            serialize(&prepend, Infinite).unwrap()
+        });
         let log_reservation =
             self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
@@ -538,9 +532,9 @@ impl<PM, P, R> PageCache<PM, P, R>
             pid: pid,
             update: new.clone(),
         };
-        let serialize_start = clock();
-        let bytes = serialize(&replace, Infinite).unwrap();
-        M.serialize.measure(clock() - serialize_start);
+        let bytes = measure(&M.serialize, || {
+            serialize(&replace, Infinite).unwrap()
+        });
         let log_reservation =
             self.log.reserve(bytes).map_err(|e| e.danger_cast())?;
         let lsn = log_reservation.lsn();
@@ -651,7 +645,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         stack_ptr: Shared<'g, ds::stack::Stack<CacheEntry<P>>>,
         guard: &'g Guard,
     ) -> CacheResult<PageGet<'g, PM::PageFrag>, Option<PagePtr<'g, P>>> {
-        let start = clock();
+        let _measure = Measure::new(&M.page_in);
         let stack_iter = StackIter::from_ptr(head, guard);
 
         let mut to_merge = vec![];
@@ -691,7 +685,6 @@ impl<PM, P, R> PageCache<PM, P, R>
         }
 
         if lids.is_empty() {
-            M.page_in.measure(clock() - start);
             return Ok(PageGet::Allocated);
         }
 
@@ -726,9 +719,9 @@ impl<PM, P, R> PageCache<PM, P, R>
             .rev()
             .collect();
 
-        let before_merge = clock();
-        let merged = self.t.merge(&*combined);
-        M.merge_page.measure(clock() - before_merge);
+        let merged = measure(&M.merge_page, || {
+            self.t.merge(&*combined)
+        });
 
         let size = std::mem::size_of_val(&merged);
         let to_evict = self.lru.accessed(pid, size);
@@ -795,8 +788,6 @@ impl<PM, P, R> PageCache<PM, P, R>
             }
         }
 
-        M.page_in.measure(clock() - start);
-
         Ok(PageGet::Materialized(merged, head))
     }
 
@@ -805,7 +796,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         to_evict: Vec<PageID>,
         guard: &'g Guard,
     ) -> std::io::Result<()> {
-        let start = clock();
+        let _measure = Measure::new(&M.page_out);
         for pid in to_evict {
             let stack_ptr = self.inner.get(pid, guard);
             if stack_ptr.is_none() {
@@ -844,7 +835,6 @@ impl<PM, P, R> PageCache<PM, P, R>
             });
 
             if last.is_none() {
-                M.page_out.measure(clock() - start);
                 return Ok(());
             }
 
@@ -878,7 +868,6 @@ impl<PM, P, R> PageCache<PM, P, R>
                 {}
             }
         }
-        M.page_out.measure(clock() - start);
         Ok(())
     }
 
@@ -888,7 +877,7 @@ impl<PM, P, R> PageCache<PM, P, R>
         lid: LogID,
     ) -> CacheResult<P, Option<PagePtr<'g, P>>> {
         trace!("pulling lsn {} lid {} from disk", lsn, lid);
-        let start = clock();
+        let _measure = Measure::new(&M.pull);
         let bytes = match self.log.read(lsn, lid).map_err(|_| ()) {
             Ok(LogRead::Flush(read_lsn, data, _len)) => {
                 assert_eq!(
@@ -908,13 +897,12 @@ impl<PM, P, R> PageCache<PM, P, R>
             }),
         }?;
 
-        let deserialize_start = clock();
-        let logged_update = deserialize::<LoggedUpdate<P>>(&*bytes)
-            .map_err(|_| ())
-            .expect("failed to deserialize data");
-        M.deserialize.measure(clock() - deserialize_start);
+        let logged_update = measure(&M.deserialize, || {
+            deserialize::<LoggedUpdate<P>>(&*bytes)
+                .map_err(|_| ())
+                .expect("failed to deserialize data")
+        });
 
-        M.pull.measure(clock() - start);
         match logged_update.update {
             Update::Compact(page_frag) |
             Update::Append(page_frag) => Ok(page_frag),
