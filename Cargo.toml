@@ -1,10 +1,10 @@
 [workspace]
 members = [
-  "crates/tests",
   "crates/pagecache",
   "crates/sled",
-  "crates/sled-native",
-  "crates/stress2",
+  "crates/mvcc",
+  "bindings/sled-native",
+  "benchmarks/stress2",
   "examples/pessimistic_transactions",
-  "examples/mvcc",
+  "tests",
 ]
