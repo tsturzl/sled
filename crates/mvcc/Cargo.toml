@@ -1,10 +1,10 @@
 [package]
-name = "db"
-version = "0.1.0"
+name = "mvcc"
+version = "0.0.1"
 authors = ["Tyler Neely <t@jujit.su>"]
 
 [dependencies]
-sled = { path = "../../crates/sled"}
+sled = { path = "../sled", version = "0.15"}
 bincode = "0.9"
 serde = "1.0"
 serde_derive = "1.0"
