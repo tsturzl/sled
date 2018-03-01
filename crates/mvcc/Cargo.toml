@@ -2,6 +2,9 @@
 name = "mvcc"
 version = "0.0.1"
 authors = ["Tyler Neely <t@jujit.su>"]
+description = "a multi-version concurrency control system that can be used on top of systems that support CAS and scan to provide transactions"
+keywords = ["database", "embedded", "concurrent", "mvcc", "transaction"]
+license = "MIT/Apache-2.0"
 
 [dependencies]
 sled = { path = "../sled", version = "0.15"}
