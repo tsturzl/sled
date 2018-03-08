@@ -93,17 +93,9 @@ impl<'a> Tx<'a> {
         self.version_search()?;
         self.validation()?;
         self.write()?;
-        self.commit();
         self.maintenance(true);
 
         Ok(())
-    }
-
-    fn commit(&mut self) {
-        for &Write(ref k, _) in &self.sets {
-            let versioned_chain = self.chains.get(k).unwrap();
-            versioned_chain.chain.commit(self.base_ts);
-        }
     }
 
     fn rollback(&mut self) {
@@ -249,17 +241,19 @@ impl<'a> Tx<'a> {
 
     fn maintenance(&mut self, success: bool) {
         // put (@k, wts, version) for last good version into epoch dropper
+
         let cleanup = || {
             for &Write(ref k, _) in &self.sets {
                 let versioned_chain = self.chains.get(k).unwrap();
-                versioned_chain.chain.abort(self.base_ts);
+                if success {
+                    versioned_chain.chain.commit(self.base_ts);
+                } else {
+                    versioned_chain.chain.abort(self.base_ts);
+                }
 
                 self.db
                     .purge_version_from_key(k, self.base_ts, success)
                     .unwrap();
-
-                // Abort all Pending in chains
-                unimplemented!("abort chain, add dropper to async clean it up");
             }
 
             // remove the writeset

@@ -90,7 +90,7 @@ impl Chain {
             let records = self.records.read().unwrap();
             println!("ts: {} records: {:?}", ts, records);
             for record in records.iter().rev() {
-                if record.wts > ts {
+                if record.wts == ts {
                     return record.wts;
                 }
                 match record.status {
