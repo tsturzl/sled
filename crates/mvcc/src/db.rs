@@ -80,7 +80,7 @@ impl Db {
             );
 
             for key in writeset {
-                self.purge_version_from_key(&key, wts)?;
+                self.purge_version_from_key(&key, wts, false)?;
             }
 
             self.tree.del(&writeset_key)?;
@@ -93,6 +93,7 @@ impl Db {
         &self,
         key: &Key,
         wts: Ts,
+        purge_lower: bool,
     ) -> DbResult<(), ()> {
         let padded_key = key_safety_pad(key);
         let value_opt = self.tree.get(&padded_key)?;
@@ -103,9 +104,16 @@ impl Db {
 
             let mut pruned = false;
             for &(ts, version) in &versions {
-                if ts == wts {
-                    self.tree.del(&*ts_to_bytes(version))?;
-                    pruned = true;
+                if purge_lower {
+                    if ts < wts {
+                        self.tree.del(&*ts_to_bytes(version))?;
+                        pruned = true;
+                    }
+                } else {
+                    if ts == wts {
+                        self.tree.del(&*ts_to_bytes(version))?;
+                        pruned = true;
+                    }
                 }
             }
 

@@ -34,9 +34,10 @@
 //              install pending has old version point to None
 //          deletes
 //              install pending has new version point to None
+extern crate sled;
+extern crate crossbeam_epoch as epoch;
 extern crate serde;
 extern crate bincode;
-extern crate sled;
 
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;

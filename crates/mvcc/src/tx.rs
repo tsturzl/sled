@@ -3,6 +3,7 @@ use std::fmt::{self, Display};
 use std::sync::Arc;
 
 use sled::Error as DbError;
+use epoch::{Guard, pin};
 
 use super::*;
 
@@ -49,6 +50,8 @@ pub struct Tx<'a> {
     pub(super) sets: Vec<Write>,
     base_ts: Ts,
     chains: HashMap<Key, VersionedChain>,
+    ebr_guard: Guard,
+    successful: bool,
 }
 
 impl<'a> Tx<'a> {
@@ -59,6 +62,8 @@ impl<'a> Tx<'a> {
             sets: vec![],
             base_ts: 0,
             chains: HashMap::new(),
+            ebr_guard: pin(),
+            successful: false,
         }
     }
 
@@ -77,7 +82,8 @@ impl<'a> Tx<'a> {
         let res = self._execute();
 
         if res.is_err() {
-            self.rollback()?;
+            // TODO propagate errors during rollback
+            self.rollback();
         }
 
         res
@@ -88,7 +94,7 @@ impl<'a> Tx<'a> {
         self.validation()?;
         self.write()?;
         self.commit();
-        self.maintenance();
+        self.maintenance(true);
 
         Ok(())
     }
@@ -100,23 +106,8 @@ impl<'a> Tx<'a> {
         }
     }
 
-    fn rollback(&mut self) -> TxResult {
-        for &Write(ref k, _) in &self.sets {
-            let versioned_chain = self.chains.get(k).unwrap();
-            versioned_chain.chain.abort(self.base_ts);
-
-            self.db.purge_version_from_key(k, self.base_ts)?;
-
-            // Abort all Pending in chains
-            unimplemented!("abort chain, add dropper to async clean it up");
-        }
-
-        // remove the writeset
-        let mut writeset_k = vec![b'!' as u8; 9];
-        writeset_k[1..9].copy_from_slice(&*ts_to_bytes(self.base_ts));
-        self.db.tree.del(&*writeset_k).map(|_| ()).map_err(
-            |e| e.into(),
-        )
+    fn rollback(&mut self) {
+        self.maintenance(false)
     }
 
     fn version_search(&mut self) -> TxResult {
@@ -157,15 +148,22 @@ impl<'a> Tx<'a> {
 
         // perform predicate matches
 
-        /* TODO
         for &Predicate(ref k, ref p) in &self.predicates {
-            unimplemented!();
-            let current = self.db.tree.get(k)?;
+            let versioned_chain = self.chains.get(k).unwrap();
+
+            if versioned_chain.initial_visible !=
+                versioned_chain.chain.visible_ts(self.base_ts)
+            {
+                return Err(Error::Abort);
+            }
+
+            let key = ts_to_bytes(versioned_chain.initial_visible);
+
+            let current = self.db.tree.get(&*key)?;
             if !p(&k, &current) {
                 return Err(Error::PredicateFailure);
             }
         }
-        */
 
         self.check_version_consistency()?;
 
@@ -249,8 +247,33 @@ impl<'a> Tx<'a> {
         Ok(())
     }
 
-    fn maintenance(&mut self) {
-        unimplemented!();
+    fn maintenance(&mut self, success: bool) {
         // put (@k, wts, version) for last good version into epoch dropper
+        let cleanup = || {
+            for &Write(ref k, _) in &self.sets {
+                let versioned_chain = self.chains.get(k).unwrap();
+                versioned_chain.chain.abort(self.base_ts);
+
+                self.db
+                    .purge_version_from_key(k, self.base_ts, success)
+                    .unwrap();
+
+                // Abort all Pending in chains
+                unimplemented!("abort chain, add dropper to async clean it up");
+            }
+
+            // remove the writeset
+            let mut writeset_k = vec![b'!' as u8; 9];
+            writeset_k[1..9].copy_from_slice(&*ts_to_bytes(self.base_ts));
+            self.db.tree.del(&*writeset_k).unwrap();
+        };
+
+        if success {
+            unsafe {
+                self.ebr_guard.defer(cleanup);
+            }
+        } else {
+            cleanup();
+        }
     }
 }
