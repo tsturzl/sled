@@ -81,7 +81,7 @@ impl Chain {
     pub fn abort(&self, ts: Ts) {
         let mut records = self.records.write().unwrap();
         let record = records.last_mut().unwrap();
-        assert_eq!(record.wts, ts);
+        // assert_eq!(record.wts, ts);
         record.status = Status::Aborted;
     }
 
@@ -101,10 +101,18 @@ impl Chain {
                 if record.wts == ts {
                     return Ok(record.wts);
                 }
+                println!("looking at chain {:?}", record);
                 match record.status {
                     Status::Committed => return Ok(record.wts),
                     Status::Aborted => continue,
-                    Status::Pending => break,
+                    Status::Pending => {
+                        if record.wts > ts {
+                            return Ok(record.wts);
+                        } else {
+                            break;
+                        }
+                    }
+
                 }
             }
         }

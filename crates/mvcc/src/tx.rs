@@ -116,6 +116,10 @@ impl<'a> Tx<'a> {
     fn set_ts(&mut self) {
         // allocate timestamps for txn and versions
         self.base_ts = self.db.ts(self.sets.len());
+        println!(
+            "~~~~~~~~~~~~~~~~~~~~~~~ new tx {} ~~~~~~~~~~~~~~~~~~~~~~~~",
+            self.base_ts
+        );
         unsafe {
             self.epoch.defer(
                 || self.db.bump_low_water_mark(self.base_ts),
@@ -124,6 +128,7 @@ impl<'a> Tx<'a> {
     }
 
     fn version_search(&mut self) -> TxResult<()> {
+        println!("tx {} version search", self.base_ts);
         let mut keyset = HashSet::new();
 
         for &Predicate(ref k, _) in &self.predicates {
@@ -161,6 +166,7 @@ impl<'a> Tx<'a> {
     }
 
     fn check_predicates(&mut self) -> TxResult<()> {
+        println!("tx {} check predicates", self.base_ts);
         // perform predicate matches
 
         for (i, &Predicate(ref k, ref predicate)) in
@@ -193,6 +199,7 @@ impl<'a> Tx<'a> {
     }
 
     fn install_pending(&mut self) -> TxResult<()> {
+        println!("tx {} install pending", self.base_ts);
         // install pending into chain
         for (i, &Write(ref k, _)) in self.sets.iter().enumerate() {
             let versioned_chain = self.chains.get(k).unwrap();
@@ -215,6 +222,7 @@ impl<'a> Tx<'a> {
     }
 
     fn update_read_ts(&mut self) -> TxResult<()> {
+        println!("tx {} update read ts", self.base_ts);
         for &Predicate(ref k, _) in &self.predicates {
             let versioned_chain = self.chains.get(k).unwrap();
             versioned_chain.chain.bump_rts(self.base_ts);
@@ -224,6 +232,7 @@ impl<'a> Tx<'a> {
     }
 
     fn check_version_consistency(&mut self) -> TxResult<()> {
+        println!("tx {} check version consistency", self.base_ts);
         // go back to all things we read and ensure the initial visible
         // version is still visible
         for &Predicate(ref k, _) in &self.predicates {
@@ -244,6 +253,7 @@ impl<'a> Tx<'a> {
     }
 
     fn write(&mut self) -> TxResult<()> {
+        println!("tx {} write", self.base_ts);
         // put writeset into Tree
         let writeset: Vec<Key> =
             self.sets.iter().map(|p| p.0.clone()).collect();
@@ -276,6 +286,7 @@ impl<'a> Tx<'a> {
     }
 
     fn maintenance(&mut self, success: bool) {
+        println!("tx {} maintenance", self.base_ts);
         // put (@k, wts, version) for last good version into epoch dropper
 
         for &Write(ref k, _) in &self.sets {
@@ -478,6 +489,7 @@ fn phen_single_anti_dependency_cycles_with_update_transactions_at_runtime_e_upda
                 _ => panic!("trying to execute non-existant transaction step"),
             };
             if res == Err(Error::Blocked) {
+                println!("blocked");
                 return;
             }
             self.step += 1;
