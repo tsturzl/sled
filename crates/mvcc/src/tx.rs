@@ -50,7 +50,7 @@ pub struct Tx<'a> {
     pub(super) sets: Vec<Write>,
     base_ts: Ts,
     chains: HashMap<Key, VersionedChain>,
-    ebr_guard: Guard,
+    epoch: Guard,
     successful: bool,
 }
 
@@ -62,7 +62,7 @@ impl<'a> Tx<'a> {
             sets: vec![],
             base_ts: 0,
             chains: HashMap::new(),
-            ebr_guard: pin(),
+            epoch: pin(),
             successful: false,
         }
     }
@@ -78,13 +78,22 @@ impl<'a> Tx<'a> {
     pub fn execute(mut self) -> TxResult {
         // allocate timestamps for txn and versions
         self.base_ts = self.db.ts(self.sets.len());
+        unsafe {
+            self.epoch.defer(
+                || self.db.bump_low_water_mark(self.base_ts),
+            );
+        }
+        println!(
+            "~~~~~~~~~~~~~~~~~ starting tx {} ~~~~~~~~~~~~~~~~~",
+            self.base_ts
+        );
 
         let res = self._execute();
 
-        if res.is_err() {
-            // TODO propagate errors during rollback
-            self.rollback();
-        }
+        // TODO propagate errors during rollback (maintenance(false))
+        self.maintenance(res.is_ok());
+
+        // self.db.debug_str();
 
         res
     }
@@ -93,13 +102,8 @@ impl<'a> Tx<'a> {
         self.version_search()?;
         self.validation()?;
         self.write()?;
-        self.maintenance(true);
 
         Ok(())
-    }
-
-    fn rollback(&mut self) {
-        self.maintenance(false)
     }
 
     fn version_search(&mut self) -> TxResult {
@@ -114,11 +118,17 @@ impl<'a> Tx<'a> {
         }
 
         for key in keyset.into_iter() {
+            println!("version search for key {:?}", key);
             // pull in chains, block if pending && wts < t.ts
             let chain = self.db.get_chain(&key).unwrap();
             let last_ts = chain.visible_ts(self.base_ts);
             if last_ts > self.base_ts {
                 // abort if any wts > t.ts
+                println!(
+                    "aborting because chain visible ts {} > our ts {}",
+                    last_ts,
+                    self.base_ts
+                );
                 return Err(Error::Abort);
             }
             self.chains.insert(
@@ -140,19 +150,28 @@ impl<'a> Tx<'a> {
 
         // perform predicate matches
 
-        for &Predicate(ref k, ref p) in &self.predicates {
+        for (i, &Predicate(ref k, ref predicate)) in
+            self.predicates.iter().enumerate()
+        {
             let versioned_chain = self.chains.get(k).unwrap();
+            let visible_ts = versioned_chain.chain.visible_ts(self.base_ts);
 
-            if versioned_chain.initial_visible !=
-                versioned_chain.chain.visible_ts(self.base_ts)
+            if versioned_chain.initial_visible != visible_ts &&
+                self.base_ts != visible_ts
             {
+                println!(
+                    "aborting because our predicate version chain has \
+                    advanced beyond where we initially read from: {} != {}",
+                    versioned_chain.initial_visible,
+                    versioned_chain.chain.visible_ts(self.base_ts)
+                );
                 return Err(Error::Abort);
             }
 
-            let key = ts_to_bytes(versioned_chain.initial_visible);
+            let key = ts_to_bytes(versioned_chain.initial_visible + i as Ts);
 
             let current = self.db.tree.get(&*key)?;
-            if !p(&k, &current) {
+            if !predicate(&k, &current) {
                 return Err(Error::PredicateFailure);
             }
         }
@@ -199,7 +218,13 @@ impl<'a> Tx<'a> {
         for &Predicate(ref k, _) in &self.predicates {
             let versioned_chain = self.chains.get(k).unwrap();
             let last_ts = versioned_chain.chain.visible_ts(self.base_ts);
-            if last_ts != versioned_chain.initial_visible {
+            if last_ts != versioned_chain.initial_visible &&
+                last_ts != self.base_ts
+            {
+                println!(
+                    "aborting because a previously read item \
+                has changed before our transaction could finish"
+                );
                 return Err(Error::Abort);
             }
         }
@@ -242,32 +267,27 @@ impl<'a> Tx<'a> {
     fn maintenance(&mut self, success: bool) {
         // put (@k, wts, version) for last good version into epoch dropper
 
-        let cleanup = || {
-            for &Write(ref k, _) in &self.sets {
-                let versioned_chain = self.chains.get(k).unwrap();
-                if success {
-                    versioned_chain.chain.commit(self.base_ts);
-                } else {
-                    versioned_chain.chain.abort(self.base_ts);
-                }
-
-                self.db
-                    .purge_version_from_key(k, self.base_ts, success)
-                    .unwrap();
+        for &Write(ref k, _) in &self.sets {
+            let versioned_chain = self.chains.get(k).unwrap();
+            if success {
+                versioned_chain.chain.commit(self.base_ts);
+            } else {
+                versioned_chain.chain.abort(self.base_ts);
             }
 
-            // remove the writeset
+            if !success {
+                println!("cleaning up base ts {}", self.base_ts);
+                for &Write(ref k, _) in &self.sets {
+                    self.db
+                        .purge_version_from_key(k, self.base_ts, success)
+                        .unwrap();
+                }
+            }
+
+            // remove the pending tx writeset to signal completeness
             let mut writeset_k = vec![b'!' as u8; 9];
             writeset_k[1..9].copy_from_slice(&*ts_to_bytes(self.base_ts));
             self.db.tree.del(&*writeset_k).unwrap();
-        };
-
-        if success {
-            unsafe {
-                self.ebr_guard.defer(cleanup);
-            }
-        } else {
-            cleanup();
         }
     }
 }

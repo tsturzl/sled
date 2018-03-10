@@ -103,8 +103,19 @@ fn it_works() {
     assert_eq!(tx.execute(), Ok(()));
 
     let mut tx = db.tx();
-    tx.predicate(b"cats".to_vec(), |_k, v| *v == Some(b"meow".to_vec()));
-    tx.predicate(b"dogs".to_vec(), |_k, v| *v == Some(b"woof".to_vec()));
+    tx.predicate(b"cats".to_vec(), |_k, v| {
+        println!("ayo predicate value is actually {:?}", v);
+        let ret = *v == Some(b"meow".to_vec());
+        println!("== Some...: {}", ret);
+        ret
+    });
+    tx.predicate(b"dogs".to_vec(), |_k, v| {
+        println!("ayo predicate value is actually {:?}", v);
+        let ret = *v == Some(b"woof".to_vec());
+        println!("== Some...: {}", ret);
+        ret
+
+    });
     tx.set(b"cats".to_vec(), Some(b"woof".to_vec()));
     tx.set(b"dogs".to_vec(), Some(b"meow".to_vec()));
     //tx.get(b"dogs".to_vec());

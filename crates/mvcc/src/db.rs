@@ -1,4 +1,7 @@
+// TODO bump up low water mark occasionally using EBR
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
 
 use sled::{Config, DbResult, Tree};
 
@@ -21,6 +24,7 @@ const TS_PERSIST_KEY: &'static [u8] = b"tx_persist";
 pub struct Db {
     pub(super) tree: sled::Tree,
     ts: AtomicUsize,
+    low_water_mark: AtomicUsize,
     mvcc: Mvcc,
 }
 
@@ -47,6 +51,7 @@ impl Db {
         let db = Db {
             tree: tree,
             ts: AtomicUsize::new(bumped_ts as usize),
+            low_water_mark: AtomicUsize::new(bumped_ts as usize),
             mvcc: Mvcc::default(),
         };
 
@@ -103,8 +108,16 @@ impl Db {
                 deserialize(&*value).expect("corrupt Data found");
 
             let mut pruned = false;
+            println!("purging through versions: {:?}", versions);
+            versions.sort_by_key(|wts_vsn| wts_vsn.1);
+            let max_vsn = versions.last().map(|wts_vsn| wts_vsn.1).unwrap_or(0);
             for &(ts, version) in &versions {
-                if purge_lower {
+                if ts < self.low_water_mark.load(SeqCst) as u64 &&
+                    version != max_vsn
+                {
+                    self.tree.del(&*ts_to_bytes(version))?;
+                    pruned = true;
+                } else if purge_lower {
                     if ts < wts {
                         self.tree.del(&*ts_to_bytes(version))?;
                         pruned = true;
@@ -234,5 +247,32 @@ impl Db {
                 Ok(self.mvcc.get(k).unwrap())
             }
         }
+    }
+
+    pub fn debug_str(&self) {
+        for item in self.tree.iter() {
+            let (k, v) = item.unwrap();
+            println!("{:?} -> {:?}", k, v);
+        }
+    }
+
+    pub fn bump_low_water_mark(&self, ts: Ts) {
+        let mut lwm = self.low_water_mark.load(SeqCst) as Ts;
+        loop {
+            if lwm >= ts {
+                return;
+            }
+            let last = self.low_water_mark.compare_and_swap(
+                lwm as usize,
+                ts as usize,
+                SeqCst,
+            );
+            if last as Ts == lwm {
+                // we succeeded.
+                return;
+            }
+            lwm = last as Ts;
+        }
+
     }
 }

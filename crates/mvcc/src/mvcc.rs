@@ -86,7 +86,12 @@ impl Chain {
     }
 
     pub fn visible_ts(&self, ts: Ts) -> Ts {
+        let mut i = 0;
         loop {
+            i += 1;
+            if i > 1 {
+                panic!("ayo");
+            }
             let records = self.records.read().unwrap();
             println!("ts: {} records: {:?}", ts, records);
             for record in records.iter().rev() {
@@ -132,6 +137,11 @@ impl Chain {
 
         if let Some(last_record) = records.last() {
             if last_ts != last_record.wts {
+                println!(
+                    "early aborting because last ts {} != last_record.wts {}",
+                    last_ts,
+                    last_record.wts
+                );
                 return Err(Error::Abort);
             }
         }
