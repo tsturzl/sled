@@ -240,10 +240,10 @@ impl Db {
 
                 chain.sort_unstable_by_key(|record| record.wts);
 
-                self.mvcc.insert(k.clone(), Chain::new(chain));
+                self.mvcc.insert(k.clone(), Chain::new(chain)).unwrap();
                 Ok(self.mvcc.get(k).unwrap())
             } else {
-                self.mvcc.insert(k.clone(), Chain::default());
+                self.mvcc.insert(k.clone(), Chain::default()).unwrap();
                 Ok(self.mvcc.get(k).unwrap())
             }
         }

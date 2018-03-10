@@ -39,6 +39,9 @@ extern crate crossbeam_epoch as epoch;
 extern crate serde;
 extern crate bincode;
 
+#[cfg(test)]
+extern crate rand;
+
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -56,7 +59,6 @@ type Version = u64;
 type Ts = u64;
 type Key = Vec<u8>;
 type Value = Vec<u8>;
-type Delta = Vec<u8>;
 
 // a pending ptr (prefixed by !) points to keys in-flight
 type WriteSet = Vec<Key>;
@@ -98,26 +100,15 @@ fn it_works() {
     let db = Db::start(conf).unwrap();
 
     let mut tx = db.tx();
-    tx.set(b"cats".to_vec(), Some(b"meow".to_vec()));
-    tx.set(b"dogs".to_vec(), Some(b"woof".to_vec()));
+    tx.set(b"cats".to_vec(), b"meow".to_vec());
+    tx.set(b"dogs".to_vec(), b"woof".to_vec());
     assert_eq!(tx.execute(), Ok(()));
 
     let mut tx = db.tx();
-    tx.predicate(b"cats".to_vec(), |_k, v| {
-        println!("ayo predicate value is actually {:?}", v);
-        let ret = *v == Some(b"meow".to_vec());
-        println!("== Some...: {}", ret);
-        ret
-    });
-    tx.predicate(b"dogs".to_vec(), |_k, v| {
-        println!("ayo predicate value is actually {:?}", v);
-        let ret = *v == Some(b"woof".to_vec());
-        println!("== Some...: {}", ret);
-        ret
-
-    });
-    tx.set(b"cats".to_vec(), Some(b"woof".to_vec()));
-    tx.set(b"dogs".to_vec(), Some(b"meow".to_vec()));
+    tx.predicate(b"cats".to_vec(), |_k, v| *v == Some(b"meow".to_vec()));
+    tx.predicate(b"dogs".to_vec(), |_k, v| *v == Some(b"woof".to_vec()));
+    tx.set(b"cats".to_vec(), b"woof".to_vec());
+    tx.set(b"dogs".to_vec(), b"meow".to_vec());
     //tx.get(b"dogs".to_vec());
     assert_eq!(tx.execute(), Ok(()));
 

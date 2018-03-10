@@ -85,21 +85,24 @@ impl Chain {
         record.status = Status::Aborted;
     }
 
-    pub fn visible_ts(&self, ts: Ts) -> Ts {
+    pub fn visible_ts(&self, ts: Ts) -> TxResult<Ts> {
+        #[test]
         let mut i = 0;
         loop {
-            i += 1;
-            if i > 1 {
-                panic!("ayo");
+            #[test]
+            {
+                i += 1;
+                if i > 1 {
+                    return Err(Error::Blocked);
+                }
             }
             let records = self.records.read().unwrap();
-            println!("ts: {} records: {:?}", ts, records);
             for record in records.iter().rev() {
                 if record.wts == ts {
-                    return record.wts;
+                    return Ok(record.wts);
                 }
                 match record.status {
-                    Status::Committed => return record.wts,
+                    Status::Committed => return Ok(record.wts),
                     Status::Aborted => continue,
                     Status::Pending => break,
                 }
@@ -132,7 +135,7 @@ impl Chain {
         }
     }
 
-    pub fn install(&self, last_ts: Ts, record: MemRecord) -> TxResult {
+    pub fn install(&self, last_ts: Ts, record: MemRecord) -> TxResult<()> {
         let mut records = self.records.write().unwrap();
 
         if let Some(last_record) = records.last() {
