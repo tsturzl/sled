@@ -4,6 +4,9 @@
 #![cfg_attr(feature="clippy", feature(plugin))]
 #![cfg_attr(feature="clippy", plugin(clippy))]
 #![cfg_attr(feature="clippy", allow(inline_always))]
+#![cfg_attr(feature="mutation_tests", feature(plugin))]
+#![cfg_attr(feature="mutation_tests", plugin(mutagen_plugin))]
+#![cfg_attr(feature="mutation_tests", feature(custom_attribute))]
 
 #[macro_use]
 extern crate serde_derive;
@@ -26,6 +29,9 @@ extern crate libc;
 #[cfg(feature = "failpoints")]
 #[macro_use]
 extern crate fail;
+
+#[cfg(feature = "mutation_tests")]
+extern crate mutagen;
 
 pub use ds::{Radix, Stack};
 
@@ -55,6 +61,7 @@ macro_rules! rep_no_copy {
 
 /// auxilliary data structures
 mod ds;
+#[cfg_attr(feature = "mutation_tests", mutate)]
 mod io;
 mod config;
 mod hash;
