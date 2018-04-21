@@ -1,6 +1,6 @@
 use std::fmt::{self, Debug};
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicIsize, AtomicUsize};
 use std::sync::atomic::Ordering::SeqCst;
 
 use epoch::{Guard, Shared, pin};
@@ -21,6 +21,7 @@ impl<'a> IntoIterator for &'a Tree {
 pub struct Tree {
     pages: Arc<PageCache<BLinkMaterializer, Frag, Vec<(PageID, PageID)>>>,
     config: Config,
+    tx_counter: Arc<AtomicIsize>,
     root: Arc<AtomicUsize>,
     merge_operator: Option<MergeOperator>,
 }
@@ -122,6 +123,7 @@ impl Tree {
         Ok(Tree {
             pages: Arc::new(pages),
             config: config,
+            tx_counter: Arc::new(AtomicIsize::new(pages.last_snapshot_lsn())),
             root: Arc::new(AtomicUsize::new(root_id)),
             merge_operator: None,
         })
@@ -447,6 +449,126 @@ impl Tree {
     /// ```
     pub fn iter(&self) -> Iter {
         self.scan(b"")
+    }
+
+    /// Multiple CAS, lightweight transactions.
+    pub fn mcas(
+        &self,
+        tx: Vec<(Key, Option<Value>, Option<Value>)>,
+    ) -> DbResult<(), ()> {
+        if tx.is_empty() {
+            return Ok(());
+        }
+
+        // read all current values
+        for &(k, old, _new) in &tx {
+            let c = self.get(&*k)?;
+
+            if c != old {
+                return Err(Error::CasFailed(()));
+            }
+        }
+
+        // create tx object in the pending state
+        let ts = self.new_tx();
+        let ts_bytes = vec![
+            (ts >> 56) as u8,
+            (ts >> 48) as u8,
+            (ts >> 40) as u8,
+            (ts >> 32) as u8,
+            (ts >> 24) as u8,
+            (ts >> 16) as u8,
+            (ts >> 8) as u8,
+            ts as u8,
+        ];
+        let tx_key = Vec::with_capacity(TX_PREFIX.len() + 8);
+        tx_key.extend_from_slice(TX_PREFIX);
+        tx_key.extend_from_slice(&*ts_bytes);
+
+        if self.cas(tx_key, None, Some(vec![TX_PENDING])).is_err() {
+            return Err(Error::CasFailed(()));
+        }
+
+        // cas all values to pending
+        for &(k, old, new) in &tx {}
+
+        // cas tx to complete
+        if self.cas(tx_key, Some(vec![TX_PENDING]), Some(vec![TX_COMMITTED]))
+            .is_err()
+        {
+            return Err(Error::CasFailed(()));
+        }
+
+        // cleanup
+        self.mcas_cleanup(true, tx, tx_key)
+    }
+
+    fn new_tx(&self) -> Lsn {
+        self.tx_counter.fetch_add(1, SeqCst)
+    }
+
+    fn mcas_cleanup(
+        &self,
+        success: bool,
+        tx: Vec<(Key, Option<Value>, Option<Value>)>,
+        tx_key: Key,
+    ) -> DbResult<(), ()> {
+        for &(k, _, _) in &tx {
+            self.cleanup_pending(k, success)?;
+        }
+
+        self.del(&*tx_key)?.expect(
+            "somehow somebody else removed our \
+            transaction object after it was set",
+        );
+
+        Ok(())
+    }
+
+    fn install_pending(&self, k: Key, v: Value) -> DbResult<(), ()> {
+        unimplemented!()
+    }
+
+    fn cleanup_pending(&self, k: Key, success: bool) -> DbResult<(), ()> {
+        unimplemented!()
+    }
+
+    fn open_value(&self, pending: Value) -> DbResult<Vec<u8>, ()> {
+        match pending {
+            Value::Present(v) => v,
+            Value::Pending {
+                old,
+                pending,
+                tx_key,
+            } => {
+                match self.attempt_rollback(tx_key) {
+                    Err(e) => return Err(e),
+                    Ok(RollbackResponse::UseOld) => old,
+                    Ok(RollbackResponse::UsePending) => pending,
+                }
+            }
+        }
+    }
+
+    fn attempt_rollback(&self, tx_key: Key) -> DbResult<RollbackResponse, ()> {
+        match self.cas(tx_key, Some(vec![TX_PENDING]), Some(vec![TX_ABORTED])) {
+            Ok(_) => Ok(RollbackResponse::UseOld),
+            Err(Error::CasFailed(Some(v))) if v[0] == TX_ABORTED => Ok(
+                RollbackResponse::UseOld,
+            ),
+            Err(Error::CasFailed(Some(v))) if v[0] == TX_COMMITTED => Ok(
+                RollbackResponse::UsePending,
+            ),
+            Err(Error::CasFailed(None)) => {
+                panic!(
+                    "transaction object \
+                                                  deletion was not \
+                                                  properly delayed \
+                                                  with EBR!"
+                )
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn recursive_split<'g>(

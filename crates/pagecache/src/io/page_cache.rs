@@ -634,6 +634,16 @@ impl<PM, P, R> PageCache<PM, P, R>
         self.page_in(pid, head, stack_ptr, guard)
     }
 
+    /// Get the last LSN known to the last snapshot.
+    pub fn last_snapshot_lsn(&self) -> Lsn {
+        let snap_opt = self.last_snapshot.lock().unwrap();
+        if let &Some(ref snap) = &*snap_opt {
+            snap.max_lsn
+        } else {
+            panic!("could not read last snapshot LSN")
+        }
+    }
+
     fn page_in<'g>(
         &self,
         pid: PageID,

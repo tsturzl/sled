@@ -74,7 +74,7 @@ impl Node {
     pub fn merge_leaf(
         &mut self,
         key: Key,
-        val: Value,
+        val: Vec<u8>,
         merge_fn: MergeOperator,
     ) {
         if let Data::Leaf(ref mut records) = self.data {

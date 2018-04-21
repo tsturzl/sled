@@ -42,7 +42,18 @@ impl<'a> Iterator for Iter<'a> {
                 let decoded_k = prefix_decode(prefix, k);
                 if Bound::Inclusive(decoded_k.clone()) > self.last_key {
                     self.last_key = Bound::Inclusive(decoded_k.to_vec());
-                    let ret = Ok((decoded_k, v.clone()));
+                    let ret_v = match v {
+                        &Value::Present(p) => p.clone(),
+                        &Value::Pending {
+                            old, ..
+                        } => {
+                            match old {
+                                Some(o) => o.clone(),
+                                None => continue,
+                            }
+                        }
+                    };
+                    let ret = Ok((decoded_k, ret_v));
                     return Some(ret);
                 }
             }

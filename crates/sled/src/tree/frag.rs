@@ -11,6 +11,14 @@ use super::*;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Frag {
     Set(Key, Value),
+    /*
+    Pending {
+        key: Key,
+        old: Value,
+        new: Value,
+        tx: Key,
+    },
+    */
     Del(Key),
     Merge(Key, Value),
     /// The optional page in Base means this node has replaced

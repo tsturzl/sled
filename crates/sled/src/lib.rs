@@ -50,6 +50,27 @@ mod tree;
 
 type Key = Vec<u8>;
 type KeyRef<'a> = &'a [u8];
-type Value = Vec<u8>;
+
+const TX_PREFIX: &'static [u8] = b"\x00\x00tx@";
+const TX_PENDING: u8 = 0;
+const TX_ABORTED: u8 = 1;
+const TX_COMMITTED: u8 = 2;
+
+// type Value = Vec<u8>;
+
+#[derive(Clone, Ord, PartialOrd, Eq, Debug, PartialEq, Serialize, Deserialize)]
+enum Value {
+    Present(Vec<u8>),
+    Pending {
+        old: Option<Vec<u8>>,
+        pending: Option<Vec<u8>>,
+        tx_key: Vec<u8>,
+    },
+}
+
+enum RollbackResponse {
+    UsePending,
+    UseOld,
+}
 
 type TreePtr<'g> = pagecache::PagePtr<'g, tree::Frag>;
