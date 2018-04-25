@@ -330,7 +330,6 @@ impl Tree {
         }
     }
 
-
     /// Delete a value, returning the last result if it existed.
     ///
     /// # Examples
@@ -451,7 +450,7 @@ impl Tree {
         self.scan(b"")
     }
 
-    /// Multiple CAS, lightweight transactions.
+    /// Multi-CAS, lightweight transactions.
     pub fn mcas(
         &self,
         tx: Vec<(Key, Option<Value>, Option<Value>)>,
@@ -767,7 +766,7 @@ impl Tree {
         &self,
         key: &[u8],
         guard: &'g Guard,
-    ) -> DbResult<(Vec<(Node, TreePtr<'g>)>, Option<Value>), ()> {
+    ) -> DbResult<(Vec<(Node, TreePtr<'g>)>, Value), ()> {
         let path = self.path_for_key(&*key, guard)?;
 
         let ret = path.last().and_then(|&(ref last_node, ref _last_cas_key)| {

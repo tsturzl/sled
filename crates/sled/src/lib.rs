@@ -66,6 +66,7 @@ enum Value {
         pending: Option<Vec<u8>>,
         tx_key: Vec<u8>,
     },
+    NotPresent,
 }
 
 enum RollbackResponse {
