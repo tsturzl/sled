@@ -212,6 +212,7 @@ impl Tree {
 
     /// Set a key to a new value.
     pub fn set(&self, key: Key, value: Value) -> DbResult<(), ()> {
+        debug!("set {:?} -> {:?}", key, value);
         if self.config.read_only {
             return Err(Error::Unsupported(
                 "the database is in read-only mode".to_owned(),
@@ -349,6 +350,7 @@ impl Tree {
     /// assert_eq!(t.del(&*vec![1]), Ok(None));
     /// ```
     pub fn del(&self, key: &[u8]) -> DbResult<Option<Value>, ()> {
+        debug!("del {:?}", key);
         if self.config.read_only {
             return Ok(None);
         }
@@ -820,7 +822,8 @@ impl Debug for Tree {
             let node = match get_res {
                 Ok(PageGet::Materialized(Frag::Base(base, _), _)) => base,
                 broken => {
-                    panic!("pagecache returned non-base node: {:?}", broken)
+                    f.write_str(&*format!("\n~~~while Debug printing: pagecache returned non-base node: {:?}\n~~~", broken))?;
+                    return Ok(());
                 }
             };
 
@@ -836,7 +839,12 @@ impl Debug for Tree {
                 let left_node = match left_get_res {
                     Ok(PageGet::Materialized(Frag::Base(base, _), _)) => base,
                     broken => {
-                        panic!("pagecache returned non-base node: {:?}", broken)
+                        f.write_str(&*format!(
+                            "\n~~~while Debug printing: pagecache \
+                            returned non-base node: {:?}\n~~~",
+                            broken
+                        ))?;
+                        return Ok(());
                     }
                 };
 
@@ -848,7 +856,10 @@ impl Debug for Tree {
                             level += 1;
                             f.write_str(&*format!("\n\tlevel {}:\n", level))?;
                         } else {
-                            panic!("trying to debug print empty index node");
+                            f.write_str(&*format!(
+                                "trying to debug print empty index node"
+                            ))?;
+                            return Ok(());
                         }
                     }
                     Data::Leaf(_items) => {

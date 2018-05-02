@@ -32,7 +32,10 @@ impl Arbitrary for Op {
             "zero segment",
             "zero segment post",
             "zero garbage segment",
+            "zero garbage segment sync",
             "zero garbage segment post",
+            "zero garbage segment on torn startup",
+            "zero garbage segment on torn startup fsync",
             "buffer write",
             "buffer write post",
             "write_config bytes",
@@ -139,8 +142,12 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
 
     macro_rules! restart {
         () => {
+            println!("BEFORE RESTART ~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+            println!("tree: {:?}", tree);
             drop(tree);
+            println!("DROPPED TREE, NOW RESTARTING~~~~~~~~~~~~~~~");
             let tree_res = sled::Tree::start(config.clone());
+            println!("RESTARTED TREE, NOW ITERATING~~~~~~~~~~~~~~");
             if let Err(ref e) = tree_res {
                 if e == &Error::FailPoint {
                     return true;
@@ -164,6 +171,7 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                         // tree MUST match reference if we have a certain reference
                         if t != r {
                             println!("expected to iterate over {:?} but got {:?} instead", r, t);
+                            println!("tree: {:?}", tree);
                             return false;
                         }
                         break;
@@ -187,6 +195,8 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                     }
                 }
             }
+            println!("AFTER  RESTART ~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+            println!("tree: {:?}", tree);
         }
     }
 
@@ -229,8 +239,14 @@ fn run_tree_crashes_nicely(ops: Vec<Op>, flusher: bool) -> bool {
                 // also use the fp_crash macro here for handling it.
                 fp_crash!(tree.flush());
 
-                // now we should be certain the thing is in there, set certainty to true
-                reference.insert(set_counter, (set_counter, true));
+                // now we should be certain the thing is in there if
+                // we aren't using an async flush thread,
+                // and we can also be certain if there are no fail
+                // points set.
+                reference.insert(set_counter, (
+                    set_counter,
+                    !flusher || fail_points.is_empty(),
+                ));
 
                 set_counter += 1;
             }
@@ -739,7 +755,7 @@ fn failpoints_bug_10() {
 #[test]
 fn failpoints_bug_11() {
     // dupe lsn detected
-    // postmortem 1:
+    // postmortem 1: we were not zeroing out detected torn segments on startup
     tests::setup_logger();
     assert!(prop_tree_crashes_nicely(
         vec![
@@ -797,6 +813,62 @@ fn failpoints_bug_12() {
             Set,
             Set,
             Restart,
+        ],
+        false,
+    ))
+}
+
+#[test]
+fn failpoints_bug_13() {
+    // postmortem 1: we were marking writes as certain even if the
+    // async flusher thread was the one that received the failpoint.
+    tests::setup_logger();
+    assert!(prop_tree_crashes_nicely(
+        vec![
+            Set,
+            Set,
+            Set,
+            Restart,
+            Set,
+            FailPoint("trailer write"),
+            Set,
+            Set,
+            Set,
+            Set,
+            Restart,
+        ],
+        true,
+    ))
+}
+
+#[test]
+fn failpoints_bug_14() {
+    // postmortem 1:
+    tests::setup_logger();
+    assert!(run_tree_crashes_nicely(
+        vec![
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            Set,
+            FailPoint("snap write mv post"),
+            Set,
+            FailPoint("trailer write"),
+            Set,
+            Del(0),
+            Set,
         ],
         false,
     ))

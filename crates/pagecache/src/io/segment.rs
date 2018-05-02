@@ -297,6 +297,7 @@ impl SegmentAccountant {
         config: Config,
         snapshot: Snapshot<R>,
     ) -> CacheResult<SegmentAccountant, ()> {
+        debug!("SegmentAccountant starting");
         let mut ret = SegmentAccountant {
             config: config,
             segments: vec![],
@@ -526,7 +527,7 @@ impl SegmentAccountant {
         // what our snapshot logic scanned, it means it's
         // empty, and we should nuke it to prevent incorrect
         // recoveries.
-        let mut to_zero = vec![];
+        let mut to_remove = vec![];
         for (&lsn, &lid) in &self.ordering {
             if lsn <= snapshot_max_lsn {
                 continue;
@@ -536,15 +537,16 @@ impl SegmentAccountant {
                 lsn,
                 lid
             );
-            to_zero.push(lsn);
             let f = self.config.file()?;
             maybe_fail!("zero garbage segment");
             f.pwrite_all(&*vec![EVIL_BYTE; SEG_HEADER_LEN], lid)?;
+            maybe_fail!("zero garbage segment sync");
             f.sync_all()?;
             maybe_fail!("zero garbage segment post");
+            to_remove.push(lsn);
         }
 
-        for lsn in to_zero.into_iter() {
+        for lsn in to_remove.into_iter() {
             self.ordering.remove(&lsn);
         }
 
@@ -1061,8 +1063,16 @@ pub fn scan_segment_lsns(
             // if lsn is 0, this is free
             assert!(
                 !ordering.contains_key(&segment.lsn),
-                "duplicate segment LSN detected, one should have \
-                been zeroed out during recovery"
+                "duplicate segment LSN {} detected at lid {}, one should have \
+                been zeroed out during recovery. \n \
+                segment: \n \
+                \t{:#?} \n \
+                ordering: \n \
+                \t{:#?}",
+                segment.lsn,
+                cursor,
+                segment,
+                ordering
             );
             ordering.insert(segment.lsn, cursor);
         }
@@ -1073,7 +1083,16 @@ pub fn scan_segment_lsns(
 
     // Check that the last <# io buffers> segments properly
     // link their previous segment pointers.
-    Ok(clean_tail_tears(ordering, config, &f))
+    let (segments, to_zero) = clean_tail_tears(ordering, config, &f);
+
+    for (_lsn, lid) in to_zero {
+        debug!("zeroing out segment at lid {}", lid);
+        maybe_fail!("zero garbage segment on torn startup fsync");
+        f.pwrite_all(&*vec![EVIL_BYTE; SEG_HEADER_LEN], lid)?;
+        f.sync_all()?;
+    }
+
+    Ok(segments)
 }
 
 // This ensures that the last <# io buffers> segments on
@@ -1085,7 +1104,7 @@ fn clean_tail_tears(
     mut ordering: BTreeMap<Lsn, LogID>,
     config: &Config,
     f: &File,
-) -> BTreeMap<Lsn, LogID> {
+) -> (BTreeMap<Lsn, LogID>, Vec<(Lsn, LogID)>) {
     let safety_buffer = config.io_bufs;
     let logical_tail: Vec<Lsn> = ordering
         .iter()
@@ -1154,13 +1173,14 @@ fn clean_tail_tears(
         }
     }
 
+    let mut to_zero = vec![];
     if let Some(tear) = tear_at {
         // we need to chop off the elements after the tear
         debug!("filtering out segments after detected tear at {}", tear);
         for (&lsn, &lid) in &ordering {
             if lsn > tear {
+                to_zero.push((lsn, lid));
                 // TODO make this a panic during non-truncating tests
-                error!("filtering out segment with lsn {} at lid {}", lsn, lid);
             }
         }
         ordering = ordering
@@ -1169,7 +1189,7 @@ fn clean_tail_tears(
             .collect();
     }
 
-    ordering
+    (ordering, to_zero)
 }
 
 /// The log may be configured to write data
