@@ -197,7 +197,7 @@ impl Tree {
             );
             let encoded_key = prefix_encode(node.lo.inner(), &*key);
             let frag = if let Some(ref n) = new {
-                Frag::Set(encoded_key, n.clone())
+                Frag::Set(encoded_key, InlineOrPtr::Inline(n.clone()))
             } else {
                 Frag::Del(encoded_key)
             };
@@ -232,7 +232,12 @@ impl Tree {
             );
             let encoded_key =
                 prefix_encode(last_node.lo.inner(), &*key);
-            let frag = Frag::Set(encoded_key, value.clone());
+
+            // TODO for large values, split it up
+            let frag = Frag::Set(
+                encoded_key,
+                InlineOrPtr::Inline(value.clone()),
+            );
             let link = self.pages.link(
                 last_node.id,
                 last_cas_key,
@@ -241,8 +246,7 @@ impl Tree {
             );
             match link {
                 Ok(new_cas_key) => {
-                    last_node
-                        .apply(&frag, self.config.merge_operator);
+                    last_node.apply(&frag);
                     let should_split = last_node
                         .should_split(self.config.blink_fanout);
                     path.push((last_node.clone(), new_cas_key));
@@ -308,37 +312,39 @@ impl Tree {
                 "the database is in read-only mode".to_owned(),
             ));
         }
+
+        let merge_fn_ptr = self.config
+            .merge_operator
+            .expect("must set a merge operator before calling merge");
+        let merge_fn: MergeOperator =
+            unsafe { std::mem::transmute(merge_fn_ptr) };
+
         let guard = pin();
         loop {
-            let mut path = self.path_for_key(&*key, &guard)?;
-            let (mut last_node, last_cas_key) = path.pop().expect(
-                "path_for_key should always return a path \
-                 of length >= 2 (root + leaf)",
-            );
+            let (mut path, cur) = self.get_internal(&*key, &guard)
+                .map_err(|e| e.danger_cast())?;
 
-            let encoded_key =
-                prefix_encode(last_node.lo.inner(), &*key);
-            let frag = Frag::Merge(encoded_key, value.clone());
+            let new = merge_fn(&key, cur.map(|c| &*c), &value);
+
+            if new == cur {
+                return Ok(());
+            }
+
+            let (node, cas_key) = path.pop().expect(
+                "get_internal somehow returned a path of length zero",
+            );
+            let encoded_key = prefix_encode(node.lo.inner(), &*key);
+
+            let frag = Frag::Set(encoded_key, new);
 
             let link = self.pages.link(
-                last_node.id,
-                last_cas_key,
+                node.id,
+                cas_key.clone(),
                 frag.clone(),
                 &guard,
             );
             match link {
-                Ok(new_cas_key) => {
-                    last_node
-                        .apply(&frag, self.config.merge_operator);
-                    let should_split = last_node
-                        .should_split(self.config.blink_fanout);
-                    path.push((last_node.clone(), new_cas_key));
-                    // success
-                    if should_split {
-                        self.recursive_split(&path, &guard)?;
-                    }
-                    return Ok(());
-                }
+                Ok(_) => return Ok(()),
                 Err(Error::CasFailed(_)) => {}
                 Err(other) => return Err(other.danger_cast()),
             }
@@ -526,10 +532,9 @@ impl Tree {
 
                     match res {
                         Ok(res) => {
-                            parent_node.apply(
-                                &Frag::ParentSplit(parent_split),
-                                self.config.merge_operator,
-                            );
+                            parent_node.apply(&Frag::ParentSplit(
+                                parent_split,
+                            ));
                             *parent_cas_key = res;
                         }
                         Err(Error::CasFailed(_)) => continue,
@@ -715,7 +720,33 @@ impl Tree {
             },
         );
 
-        Ok((path, ret))
+        let val: Option<Value> = match ret {
+            Some(InlineOrPtr::Inline(val)) => Some(val),
+            Some(InlineOrPtr::Ptr(pids)) => {
+                let mut pages = vec![];
+                for pid in pids {
+                    let get_cursor = self.pages
+                        .get(pid, guard)
+                        .map_err(|e| e.danger_cast())?;
+
+                    let data = match get_cursor {
+                        PageGet::Materialized(
+                            Frag::PartialValue(data),
+                            _,
+                        ) => data,
+                        _broken => {
+                            return Err(Error::ReportableBug(format!("got non-base node while reassembling fragmented page!")));
+                        }
+                    };
+
+                    pages.push(data);
+                }
+                Some(pages.as_slice().concat())
+            }
+            None => None,
+        };
+
+        Ok((path, val))
     }
 
     #[doc(hidden)]

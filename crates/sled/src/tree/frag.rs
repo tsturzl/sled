@@ -10,14 +10,14 @@ use super::*;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Frag {
-    Set(Key, Value),
+    Set(Key, InlineOrPtr),
     Del(Key),
-    Merge(Key, Value),
     /// The optional page in Base means this node has replaced
     /// the specified page as a new root.
     Base(Node, Option<PageID>),
     ChildSplit(ChildSplit),
     ParentSplit(ParentSplit),
+    PartialValue(Value),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

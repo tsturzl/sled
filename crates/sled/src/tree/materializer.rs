@@ -34,7 +34,7 @@ impl Materializer for BLinkMaterializer {
         };
 
         for &frag in &frags[1..] {
-            base_node.apply(frag, self.config.merge_operator);
+            base_node.apply(frag);
         }
 
         Frag::Base(base_node, is_root)

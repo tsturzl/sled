@@ -50,15 +50,51 @@ impl<'a> Iterator for Iter<'a> {
             };
 
             let prefix = node.lo.inner();
-            for (ref k, ref v) in
+            for (k, v) in
                 node.data.leaf().expect("node should be a leaf")
             {
-                let decoded_k = prefix_decode(prefix, k);
+                let decoded_k = prefix_decode(prefix, &*k);
                 if Bound::Inclusive(decoded_k.clone()) > self.last_key
                 {
                     self.last_key =
                         Bound::Inclusive(decoded_k.to_vec());
-                    let ret = Ok((decoded_k, v.clone()));
+
+                    let val: Value = match v {
+                        InlineOrPtr::Inline(val) => val,
+                        InlineOrPtr::Ptr(pids) => {
+                            let mut pages = vec![];
+                            for pid in pids {
+                                let get_cursor = self.inner
+                                    .get(pid, &guard)
+                                    .map_err(|e| e.danger_cast());
+
+                                if get_cursor.is_err() {
+                                    return Some(
+                                        get_cursor.map(|_| {
+                                            (vec![], vec![])
+                                        }),
+                                    );
+                                }
+
+                                let get_cursor = get_cursor.unwrap();
+
+                                let data = match get_cursor {
+                                    PageGet::Materialized(
+                                        Frag::PartialValue(data),
+                                        _,
+                                    ) => data,
+                                    _broken => {
+                                        return Some(Err(Error::ReportableBug(format!("got non-base node while reassembling fragmented page!"))));
+                                    }
+                                };
+
+                                pages.push(data);
+                            }
+                            pages.concat()
+                        }
+                    };
+
+                    let ret = Ok((decoded_k, val));
                     return Some(ret);
                 }
             }

@@ -10,7 +10,7 @@ mod prefix;
 mod tree;
 
 use self::bound::Bound;
-use self::data::Data;
+use self::data::{Data, InlineOrPtr};
 use self::frag::{ChildSplit, ParentSplit};
 use self::node::Node;
 use self::prefix::{prefix_cmp, prefix_decode, prefix_encode};

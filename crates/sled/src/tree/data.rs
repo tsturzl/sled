@@ -2,10 +2,17 @@ use std::fmt::Debug;
 
 use super::*;
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Ord, Eq,
+         PartialOrd)]
+pub enum InlineOrPtr {
+    Inline(Value),
+    Ptr(Vec<PageID>),
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Data {
     Index(Vec<(Key, PageID)>),
-    Leaf(Vec<(Key, Value)>),
+    Leaf(Vec<(Key, InlineOrPtr)>),
 }
 
 impl Data {
@@ -78,14 +85,14 @@ impl Data {
         }
     }
 
-    pub fn leaf(&self) -> Option<Vec<(Key, Value)>> {
-        match *self {
+    pub fn leaf(self) -> Option<Vec<(Key, InlineOrPtr)>> {
+        match self {
             Data::Index(_) => None,
-            Data::Leaf(ref items) => Some(items.clone()),
+            Data::Leaf(items) => Some(items.clone()),
         }
     }
 
-    pub fn leaf_ref(&self) -> Option<&Vec<(Key, Value)>> {
+    pub fn leaf_ref(&self) -> Option<&Vec<(Key, InlineOrPtr)>> {
         match *self {
             Data::Index(_) => None,
             Data::Leaf(ref items) => Some(items),
