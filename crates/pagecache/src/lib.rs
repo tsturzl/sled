@@ -84,6 +84,7 @@ mod util;
 pub mod log;
 
 use std::cell::UnsafeCell;
+use std::cmp::Ordering;
 use std::fmt::{self, Debug};
 use std::io;
 use std::sync::atomic::AtomicUsize;
@@ -144,6 +145,10 @@ pub type Lsn = i64;
 
 /// A page identifier.
 pub type PageId = usize;
+
+/// Allow arbitrary logic to be injected to compair keys.
+pub type CmpOperator =
+    fn(a: &[u8], b: &[u8]) -> Ordering;
 
 /// Allows arbitrary logic to be injected into mere operations of the `PageCache`.
 pub type MergeOperator =

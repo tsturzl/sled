@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::fmt::Debug;
 use std::fs;
 use std::io::{Read, Seek, Write};
@@ -89,6 +90,9 @@ pub struct ConfigBuilder {
     pub zstd_compression_factor: i32,
     #[doc(hidden)]
     pub merge_operator: Option<usize>,
+    #[doc(hidden)]
+    // use a Cell to allow mutation later
+    pub cmp_operator: Cell<Option<usize>>,
 }
 
 unsafe impl Send for ConfigBuilder {}
@@ -142,6 +146,7 @@ impl Default for ConfigBuilder {
             temporary: false,
             segment_mode: SegmentMode::Gc,
             merge_operator: None,
+            cmp_operator: Cell::new(None),
         }
     }
 }
@@ -185,6 +190,12 @@ impl ConfigBuilder {
     /// Set the path of the database
     pub fn set_path<P: AsRef<Path>>(&mut self, path: P) {
         self.path = path.as_ref().to_path_buf();
+    }
+
+    /// Set the comparison operator that can be used when ordering keys
+    pub fn cmp_operator(mut self, co: CmpOperator) -> ConfigBuilder {
+        self.cmp_operator = Cell::new(Some(co as usize));
+        self
     }
 
     /// Set the merge operator that can be relied on during merges in
@@ -718,7 +729,7 @@ impl Config {
                 k
             );
         }
-
+        
         for (k, v) in &incremental.replacements {
             if !regenerated.replacements.contains_key(&k) {
                 panic!("page only present in incremental replacement map: {}", k);
@@ -730,7 +741,7 @@ impl Config {
                 k,
             );
         }
-
+        
         assert_eq!(
             incremental,
             regenerated,

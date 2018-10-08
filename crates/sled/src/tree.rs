@@ -32,6 +32,9 @@ unsafe impl Sync for Tree {}
 impl Tree {
     /// Load existing or create a new `Tree`.
     pub fn start(config: Config) -> Result<Tree, ()> {
+        if config.cmp_operator.get().is_none() {
+            config.cmp_operator.set(Some(prefix_cmp as usize));
+        }
         #[cfg(any(test, feature = "check_snapshot_integrity"))]
         match config
             .verify_snapshot::<BLinkMaterializer, Frag, Vec<(PageId, PageId)>>(
@@ -241,8 +244,11 @@ impl Tree {
             );
             match link {
                 Ok(new_cas_key) => {
-                    last_node
-                        .apply(&frag, self.config.merge_operator);
+                    last_node.apply(
+                        &frag,
+                        self.config.merge_operator,
+                        self.config.cmp_operator.get(),
+                    );
                     let should_split = last_node
                         .should_split(self.config.blink_fanout);
                     path.push((last_node.clone(), new_cas_key));
@@ -328,8 +334,11 @@ impl Tree {
             );
             match link {
                 Ok(new_cas_key) => {
-                    last_node
-                        .apply(&frag, self.config.merge_operator);
+                    last_node.apply(
+                        &frag,
+                        self.config.merge_operator,
+                        self.config.cmp_operator.get(),
+                    );
                     let should_split = last_node
                         .should_split(self.config.blink_fanout);
                     path.push((last_node.clone(), new_cas_key));
@@ -375,7 +384,14 @@ impl Tree {
                 Data::Leaf(ref items) => {
                     let search =
                         items.binary_search_by(|&(ref k, ref _v)| {
-                            prefix_cmp(k, &*encoded_key)
+                            let cmp_fn_ptr = self.config.cmp_operator.get()
+                                .expect("must have comparison operator set");
+                            unsafe {
+                                let cmp_fn: CmpOperator = 
+                                    std::mem::transmute(cmp_fn_ptr);
+
+                                cmp_fn(k, &*encoded_key)
+                            }
                         });
                     if let Ok(idx) = search {
                         ret = Some(items[idx].1.clone());
@@ -529,6 +545,7 @@ impl Tree {
                             parent_node.apply(
                                 &Frag::ParentSplit(parent_split),
                                 self.config.merge_operator,
+                                self.config.cmp_operator.get(),
                             );
                             *parent_cas_key = res;
                         }
@@ -555,7 +572,8 @@ impl Tree {
                         parent_split.to,
                         parent_split.at.inner().to_vec(),
                         guard,
-                    ).map(|_| ())
+                    )
+                    .map(|_| ())
                     .map_err(|e| e.danger_cast());
             }
         }
@@ -592,7 +610,8 @@ impl Tree {
                 PagePtr::allocated(),
                 Frag::Base(rhs, None),
                 guard,
-            ).map_err(|e| e.danger_cast())?;
+            )
+            .map_err(|e| e.danger_cast())?;
 
         // try to install a child split on the left side
         let link = self.pages.link(
@@ -668,7 +687,8 @@ impl Tree {
                 PagePtr::allocated(),
                 new_root,
                 guard,
-            ).expect(
+            )
+            .expect(
                 "we should be able to replace a newly \
                  allocated page without issue",
             );
@@ -710,7 +730,16 @@ impl Tree {
                     prefix_encode(last_node.lo.inner(), key);
                 let search =
                     items.binary_search_by(|&(ref k, ref _v)| {
-                        prefix_cmp(k, &*encoded_key)
+                        let cmp_fn_ptr =
+                            self.config.cmp_operator.get().expect(
+                                "must have comparison operator set",
+                            );
+                        unsafe {
+                            let cmp_fn: CmpOperator =
+                                std::mem::transmute(cmp_fn_ptr);
+
+                            cmp_fn(k, &*encoded_key)
+                        }
                     });
                 if let Ok(idx) = search {
                     // cap a del frag below
